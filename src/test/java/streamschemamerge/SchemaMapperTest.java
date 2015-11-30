@@ -20,8 +20,9 @@
 *
 ******************************************************************************/
 
-package com.graphiq.kettle.steps.streamschemamerge;
+package streamschemamerge;
 
+import com.graphiq.kettle.steps.streamschemamerge.StreamSchemaStepMeta;
 import junit.framework.TestCase;
 import org.pentaho.di.core.KettleEnvironment;
 import org.pentaho.di.core.RowMetaAndData;

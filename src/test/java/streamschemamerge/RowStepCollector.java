@@ -20,7 +20,7 @@
  *
  ******************************************************************************/
 
-package com.graphiq.kettle.steps.streamschemamerge;
+package streamschemamerge;
 
 import org.pentaho.di.core.RowMetaAndData;
 import org.pentaho.di.core.row.RowMetaInterface;

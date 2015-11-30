@@ -20,7 +20,7 @@
  *
  ******************************************************************************/
 
-package com.graphiq.kettle.steps.streamschemamerge;
+package streamschemamerge;
 
 public class TestFailedException extends Exception {
 
