@@ -35,6 +35,7 @@ import org.pentaho.di.trans.step.StepMeta;
 import org.pentaho.di.trans.step.StepMetaInterface;
 
 import java.util.ArrayList;
+import java.util.LinkedList;
 
 /**
  * Merge streams from multiple different steps into a single stream. Unlike most other steps, this step does NOT
@@ -85,6 +86,8 @@ public class StreamSchemaStep extends BaseStep implements StepInterface {
 		data.rowMetas = new RowMetaInterface[data.numSteps];
 		data.rowSets = new ArrayList<RowSet>();
         data.stepNames = new String[data.numSteps];
+		data.initialRowBuffer = new LinkedList<Object[]>();
+		data.initialRowBufferRowsetNumber = new LinkedList<Integer>();
 
 		return super.init(meta, data);
 	}
@@ -108,21 +111,57 @@ public class StreamSchemaStep extends BaseStep implements StepInterface {
          */
 		if (first) {
 			first = false;
-
+            data.foundARowMeta = false;
             for (int i = 0; i < data.infoStreams.size(); i++) {
                 data.r = findInputRowSet(data.infoStreams.get(i).getStepname());
                 data.rowSets.add(data.r);
                 data.stepNames[i] = data.r.getName();
                 // Avoids race condition. Row metas are not available until the previous steps have called
                 // putRowWait at least once
-                while (data.rowMetas[i] == null && !isStopped()) {
+                data.iterations = 0;
+                boolean loopedPostDoneSignal = false;  // this ensures that we run 1 final time after the done signal
+                boolean doneSignal = false;  // we can have an infinite loop if a step isn't sending any rows
+                while (data.rowMetas[i] == null && !loopedPostDoneSignal && !isStopped()) {
                     data.rowMetas[i] = data.r.getRowMeta();
+                    data.iterations++;
+                    if (doneSignal) {
+                        // we have completed a loop after the done signal
+                        loopedPostDoneSignal = true;
+                    }
+                    if (data.r.isDone()) {
+                        // we've received the done signal
+                        doneSignal = true;
+                    }
+					// This step blocks until it gets data from all input row sets (or the row sets tell it they're done)
+					// This means that you can encounter issues if you split a stream with a filter, do some action
+					// and then join it back together with this step. You will be deadlocked. This alleviates the issue
+					// by freeing room in the blocking rowset and storing it in this step until we receive a row from
+					// all incoming rowsets. We then
+					// together with this step and
+					if (data.iterations > data.ACCUMULATION_TRIGGER) {
+						data.initialRowBuffer.add(getRow());
+						data.initialRowBufferRowsetNumber.add(i);
+					}
                 }
+                if (data.rowMetas[i] != null) {
+                    // indicates this rowset is not sending any rows
+                    data.foundARowMeta = true;
+                }
+                if (isDebug()) {
+                    logDebug("Iterations: " + data.iterations);
+                }
+            }
+
+            if (!data.foundARowMeta) {
+                // none of the steps are sending rows so indicate we're done
+                setOutputDone();
+                return false;
             }
 
 			data.schemaMapping = new SchemaMapper(data.rowMetas);  // creates mapping and master output row
 			data.mapping = data.schemaMapping.getMapping();
 			data.outputRowMeta = data.schemaMapping.getRowMeta();
+            data.convertToString = data.schemaMapping.getConvertToString();
 			setInputRowSets(data.rowSets);  // set the order of the inputrowsets to match the order we've defined
             if (isDetailed()) {
                 logDetailed("Finished generating mapping");
@@ -130,7 +169,13 @@ public class StreamSchemaStep extends BaseStep implements StepInterface {
 
 		}
 
-		Object[] incomingRow = getRow();  // get the next available row
+		Object[] incomingRow;
+		if (data.initialRowBuffer.size() > 0) {
+			// clear cache before reading rows form rowset again
+			incomingRow = data.initialRowBuffer.remove();
+		} else {
+			incomingRow = getRow();  // get the next available row
+		}
 
 		// if no more rows are expected, indicate step is finished and processRow() should not be called again
 		if (incomingRow == null){
@@ -138,8 +183,13 @@ public class StreamSchemaStep extends BaseStep implements StepInterface {
 			return false;
 		}
 
-        // get the name of the step that the current rowset is coming from
-		data.currentName = getInputRowSets().get(getCurrentInputRowSetNr()).getName();
+		if (data.initialRowBuffer.size() > 0) {
+			// we're reading fromt he cache not the rowset
+			data.currentName = getInputRowSets().get(data.initialRowBufferRowsetNumber.remove()).getName();
+		} else {
+			// get the name of the step that the current rowset is coming from
+			data.currentName = getInputRowSets().get(getCurrentInputRowSetNr()).getName();
+		}
         // because rowsets are removed from the list of rowsets once they're exhausted (in the getRow() method) we
         // need to use the name to find the proper index for our lookups later
 		for (int i = 0; i < data.stepNames.length; i++) {
@@ -160,7 +210,14 @@ public class StreamSchemaStep extends BaseStep implements StepInterface {
 		data.inRowMeta = data.rowMetas[data.streamNum];  // set appropriate meta for incoming row
 		for (int j = 0; j < data.inRowMeta.size(); j++) {
             int newPos = data.rowMapping[j];
-			outputRow[newPos] = incomingRow[j];  // map a fields old position to its new position
+            // map a fields old position to its new position
+            if (data.convertToString.contains(newPos) && incomingRow[j] != null) {
+                // we need to convert the underlying data type to string
+                outputRow[newPos] = incomingRow[j].toString();
+            } else {
+                outputRow[newPos] = incomingRow[j];
+            }
+
 		}
 
 		// put the row to the output row stream

@@ -28,7 +28,9 @@ import org.pentaho.di.trans.step.BaseStepData;
 import org.pentaho.di.trans.step.StepDataInterface;
 import org.pentaho.di.trans.step.errorhandling.StreamInterface;
 
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Holds data objects used in StreamSchemaStep
@@ -61,5 +63,17 @@ public class StreamSchemaStepData extends BaseStepData implements StepDataInterf
 	public String[] stepNames;  // rowset names for incoming rowsets
 
 	public RowSet r;  // used for iterating over rowsets
+
+    public boolean foundARowMeta;  // indicates that rows are being sent to the step
+
+    public int iterations;  // used to track how many loops have occurred looking for rowsets
+
+    public Set<Integer> convertToString; // used when we have to resolve data type mismatches
+
+	public LinkedList<Object[]> initialRowBuffer;
+
+	public LinkedList<Integer> initialRowBufferRowsetNumber;
+
+	public int ACCUMULATION_TRIGGER;
 }
 	
